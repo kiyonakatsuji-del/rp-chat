@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ロールプレイチャット</title>
+<style>
+*{box-sizing:border-box}
+:root{
+  --bg:#ffffff;--fg:#1c1c1c;--sub:#6b6b6b;--line:#d9d9d9;
+  --user:rgba(219,231,251,.94);--model:rgba(241,241,241,.94);
+  --accent:#1a5fd0;--on-accent:#ffffff;--danger:#c0392b;
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#1a1a1a;--fg:#e8e8e8;--sub:#9a9a9a;--line:#3a3a3a;
+    --user:rgba(38,54,79,.93);--model:rgba(42,42,42,.93);
+    --accent:#6ea2ff;--on-accent:#0b1a33;--danger:#ff7b6b;
+  }
+}
+html,body{height:100%;margin:0}
+body{
+  font-family:system-ui,-apple-system,"Hiragino Sans","Yu Gothic",Meiryo,sans-serif;
+  background:var(--bg);color:var(--fg);
+  display:flex;flex-direction:column;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+button{
+  font:inherit;font-size:14px;padding:6px 10px;
+  border:1px solid var(--line);background:transparent;color:inherit;
+  border-radius:6px;cursor:pointer;
+}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+button.danger{color:var(--danger);border-color:var(--danger)}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+header{display:flex;flex-wrap:wrap;gap:6px;padding:8px;border-bottom:1px solid var(--line)}
+header select{flex:1;min-width:120px}
+
+select,input[type=text],input[type=password],textarea{
+  font:inherit;font-size:16px;padding:6px 8px;
+  border:1px solid var(--line);background:transparent;color:inherit;border-radius:6px;
+}
+select option{background:var(--bg);color:var(--fg)}
+
+#stage{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+#bg{position:absolute;inset:0;background-size:cover;background-position:center;background-repeat:no-repeat}
+#log{position:relative;flex:1;min-height:0;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:12px}
+.hint{color:var(--sub);text-align:center;margin:auto;background:var(--model);padding:8px 12px;border-radius:10px}
+.msg{max-width:min(720px,92%);padding:8px 12px;border-radius:10px}
+.msg.user{align-self:flex-end;background:var(--user)}
+.msg.model{align-self:flex-start;background:var(--model)}
+.name{font-size:12px;color:var(--sub);margin-bottom:2px}
+.msg.user .name{text-align:right}
+.text{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}
+.tools{display:flex;gap:12px;margin-top:4px}
+.msg.user .tools{justify-content:flex-end}
+.tools button{border:none;padding:2px 0;font-size:12px;color:var(--sub);text-decoration:underline}
+
+#status{padding:4px 12px;font-size:12px;color:var(--sub);border-top:1px solid var(--line)}
+#status:empty{display:none}
+#status.error{color:var(--danger)}
+
+footer{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line);align-items:flex-end}
+footer textarea{flex:1;resize:none;max-height:40vh}
+footer button{padding:9px 14px}
+
+dialog{
+  background:var(--bg);color:var(--fg);
+  border:1px solid var(--line);border-radius:8px;
+  width:min(560px,94vw);max-height:90dvh;padding:16px;
+}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h2{font-size:16px;margin:0 0 4px}
+dialog label{display:block;margin-top:10px;font-size:13px;color:var(--sub)}
+dialog input,dialog select,dialog textarea{width:100%;margin-top:3px}
+dialog input[type=checkbox]{width:auto;margin:0 6px 0 0}
+dialog label.check{display:flex;align-items:center;color:var(--fg)}
+dialog textarea{resize:vertical}
+dialog .note{font-size:12px;color:var(--sub);margin-top:4px}
+.row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+.row .left{margin-right:auto}
+
+#imgList{max-height:55dvh;overflow-y:auto;margin-top:8px}
+.imgrow{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)}
+.thumb{width:96px;height:64px;object-fit:cover;border-radius:4px;flex:none}
+.info{flex:1;min-width:0;overflow-wrap:anywhere}
+.iname{font-size:14px}
+.icond{font-size:12px;color:var(--sub);margin-top:2px;white-space:pre-wrap}
+.ibtns{display:flex;flex-direction:column;gap:4px;flex:none}
+.preview{display:block;max-width:100%;max-height:30vh;margin:8px auto 0;border-radius:6px}
+</style>
+</head>
+<body>
+
+<header>
+  <select id="charSelect" aria-label="キャラクター"></select>
+  <button id="btnEdit">編集</button>
+  <button id="btnNew">新規</button>
+  <button id="btnReset">リセット</button>
+  <button id="btnBg">背景</button>
+  <button id="btnSettings">設定</button>
+</header>
+
+<div id="stage">
+  <div id="bg"></div>
+  <main id="log"></main>
+</div>
+<div id="status" role="status"></div>
+
+<footer>
+  <textarea id="input" rows="1" placeholder="メッセージを入力（Ctrl+Enterで送信）"></textarea>
+  <button id="btnSend" class="primary">送信</button>
+  <button id="btnStop" hidden>停止</button>
+</footer>
+
+<!-- 設定 -->
+<dialog id="dlgSettings">
+  <h2>設定</h2>
+  <label>Gemini APIキー
+    <input type="password" id="sKey" autocomplete="off" placeholder="AIza...">
+  </label>
+  <div class="note">キーはこのブラウザのlocalStorageにのみ保存されます。</div>
+  <label>モデル
+    <input type="text" id="sModel" list="modelList" autocomplete="off">
+  </label>
+  <datalist id="modelList">
+    <option value="gemini-2.5-flash"></option>
+    <option value="gemini-2.5-flash-lite"></option>
+    <option value="gemini-2.5-pro"></option>
+  </datalist>
+  <label>温度（<span id="sTempVal">1.0</span>）
+    <input type="range" id="sTemp" min="0" max="2" step="0.1">
+  </label>
+  <label>セーフティフィルタ
+    <select id="sSafety">
+      <option value="default">標準</option>
+      <option value="relaxed">緩め（高リスクのみブロック）</option>
+    </select>
+  </label>
+  <div class="note">エクスポートにはキャラクター、会話履歴、背景画像が含まれます（APIキーは含まれません）。画像が多いとファイルが大きくなります。</div>
+  <div class="row">
+    <button id="btnExport" class="left">エクスポート</button>
+    <button id="btnImport">インポート</button>
+    <button id="btnSettingsClose" class="primary">閉じる</button>
+  </div>
+  <input type="file" id="fileImport" accept="application/json,.json" hidden>
+</dialog>
+
+<!-- キャラクター編集 -->
+<dialog id="dlgChar">
+  <h2 id="charDlgTitle">キャラクター</h2>
+  <label>名前
+    <input type="text" id="cName" autocomplete="off">
+  </label>
+  <label>あなたの名前
+    <input type="text" id="cUser" autocomplete="off" placeholder="空欄なら「ユーザー」">
+  </label>
+  <label>キャラクター設定
+    <textarea id="cPersona" rows="5" placeholder="性格、口調、経歴、関係性など"></textarea>
+  </label>
+  <label>シチュエーション
+    <textarea id="cScenario" rows="3" placeholder="場所、時間、状況など"></textarea>
+  </label>
+  <label>最初のメッセージ
+    <textarea id="cGreeting" rows="3"></textarea>
+  </label>
+  <label>ルール
+    <textarea id="cRules" rows="5"></textarea>
+  </label>
+  <div class="note">{{user}} はあなたの名前、{{char}} はキャラクター名に置き換わります。最初のメッセージは新規作成時とリセット時に使われます。</div>
+  <div class="row">
+    <button id="btnCharDelete" class="danger left">削除</button>
+    <button id="btnCharCancel">キャンセル</button>
+    <button id="btnCharSave" class="primary">保存</button>
+  </div>
+</dialog>
+
+<!-- 背景画像の一覧 -->
+<dialog id="dlgImages">
+  <h2 id="imgDlgTitle">背景画像</h2>
+  <div class="note">画像ごとに「どんな状況のときに使うか」を設定すると、その状況になったタイミングで背景が切り替わります。画像はキャラクターごとに登録され、長辺1600pxに縮小して保存されます。</div>
+  <div id="imgList"></div>
+  <div class="row">
+    <button id="btnImgAdd">画像を追加</button>
+    <button id="btnImagesClose" class="primary">閉じる</button>
+  </div>
+  <input type="file" id="fileImg" accept="image/*" multiple hidden>
+</dialog>
+
+<!-- 背景画像の設定 -->
+<dialog id="dlgImg">
+  <h2>背景画像の設定</h2>
+  <img id="iPreview" class="preview" alt="">
+  <label>名前
+    <input type="text" id="iName" autocomplete="off">
+  </label>
+  <label>この背景にする状況
+    <textarea id="iCond" rows="3" placeholder="例：夜になり、二人で海辺を歩いているとき"></textarea>
+  </label>
+  <div class="note">条件に当てはまる状況になると、Geminiがこの画像に切り替えます。具体的に書くほど精度が上がります。空欄の場合は自動では切り替わりません。</div>
+  <label class="check"><input type="checkbox" id="iDefault">会話開始時の背景にする</label>
+  <div class="row">
+    <button id="btnImgDelete" class="danger left">削除</button>
+    <button id="btnImgCancel">キャンセル</button>
+    <button id="btnImgSave" class="primary">保存</button>
+  </div>
+</dialog>
+
+<!-- メッセージ編集 -->
+<dialog id="dlgMsg">
+  <h2>メッセージを編集</h2>
+  <textarea id="mText" rows="8" style="width:100%;margin-top:8px"></textarea>
+  <div class="row">
+    <button id="btnMsgCancel">キャンセル</button>
+    <button id="btnMsgSave" class="primary">保存</button>
+  </div>
+</dialog>
+
+<script>
+'use strict';
+
+const $ = s => document.querySelector(s);
+const LS_KEY = 'rp.v1';
+const DEFAULT_RULES =
+  '- 常にキャラクターとして応答し、AIやモデルであることには触れない。\n' +
+  '- {{user}}の台詞や行動を勝手に書かない。\n' +
+  '- 台詞は「」で、行動や情景の描写は*で囲んで書く。\n' +
+  '- 返答は1〜3段落程度にして、会話が続けやすい形で終える。';
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+let state = {
+  settings: { apiKey: '', model: 'gemini-2.5-flash', temperature: 1, safety: 'default' },
+  chars: [],
+  chats: {},
+  currentId: null
+};
+let generating = false;
+let controller = null;
+let lastTextEl = null;
+let editingCharId = null;
+let editingMsgIdx = -1;
+let editingImgId = null;
+let db = null;
+const imageCache = {}; // charId -> [{id, charId, key, name, condition, isDefault, blob, url}]
+
+/* ---------- IndexedDB（背景画像） ---------- */
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open('rp-images', 1);
+    r.onupgradeneeded = () => {
+      const s = r.result.createObjectStore('images', { keyPath: 'id' });
+      s.createIndex('charId', 'charId');
+    };
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+
+function dbPut(im) {
+  return new Promise((resolve, reject) => {
+    const { url, ...rec } = im;
+    const tx = db.transaction('images', 'readwrite');
+    tx.objectStore('images').put(rec);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+function dbDelete(id) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('images', 'readwrite');
+    tx.objectStore('images').delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function dbGetByChar(charId) {
+  return new Promise((resolve, reject) => {
+    const rq = db.transaction('images').objectStore('images').index('charId').getAll(charId);
+    rq.onsuccess = () => resolve(rq.result);
+    rq.onerror = () => reject(rq.error);
+  });
+}
+
+function dbGetAll() {
+  return new Promise((resolve, reject) => {
+    const rq = db.transaction('images').objectStore('images').getAll();
+    rq.onsuccess = () => resolve(rq.result);
+    rq.onerror = () => reject(rq.error);
+  });
+}
+
+function dbDeleteByChar(charId) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('images', 'readwrite');
+    const st = tx.objectStore('images');
+    const rq = st.index('charId').getAllKeys(charId);
+    rq.onsuccess = () => { rq.result.forEach(k => st.delete(k)); };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+const keyNum = k => parseInt(String(k).replace(/\D/g, ''), 10) || 0;
+
+async function loadImages(charId) {
+  (imageCache[charId] || []).forEach(i => { if (i.url) URL.revokeObjectURL(i.url); });
+  if (!db) { imageCache[charId] = []; return; }
+  try {
+    const recs = await dbGetByChar(charId);
+    recs.sort((a, b) => keyNum(a.key) - keyNum(b.key));
+    imageCache[charId] = recs.map(r => Object.assign(r, { url: URL.createObjectURL(r.blob) }));
+  } catch (e) {
+    console.warn(e);
+    imageCache[charId] = [];
+    setStatus('背景画像の読み込みに失敗しました', true);
+  }
+}
+
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+function dataURLToBlob(dataUrl) {
+  const i = dataUrl.indexOf(',');
+  const meta = dataUrl.slice(0, i);
+  const mime = (meta.match(/data:([^;]+)/) || [])[1] || 'image/jpeg';
+  const bin = atob(dataUrl.slice(i + 1));
+  const arr = new Uint8Array(bin.length);
+  for (let k = 0; k < bin.length; k++) arr[k] = bin.charCodeAt(k);
+  return new Blob([arr], { type: mime });
+}
+
+function resizeImage(file, maxSide, quality) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const r = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * r));
+      const h = Math.max(1, Math.round(img.height * r));
+      const cv = document.createElement('canvas');
+      cv.width = w;
+      cv.height = h;
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      cv.toBlob(b => {
+        URL.revokeObjectURL(url);
+        if (b) resolve(b); else reject(new Error('画像の変換に失敗しました'));
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('画像を読み込めませんでした'));
+    };
+    img.src = url;
+  });
+}
+
+/* ---------- 保存・読み込み ---------- */
+function sampleChar() {
+  return {
+    id: uid(),
+    name: 'ミナト',
+    userName: 'あなた',
+    persona: '海辺の小さな古書店を営む30代の店主。穏やかで少し皮肉屋。本の話になると饒舌になる。丁寧な標準語で話す。',
+    scenario: '雨の日の夕方。客のいない店内に、常連の{{user}}が入ってきたところ。',
+    greeting: '*ドアのベルが鳴り、本から顔を上げる*\n「いらっしゃい。……ああ、{{user}}ですか。ちょうどお茶を淹れたところですよ」',
+    rules: DEFAULT_RULES
+  };
+}
+
+function load() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      state.settings = Object.assign(state.settings, d.settings || {});
+      state.chars = Array.isArray(d.chars) ? d.chars : [];
+      state.chats = d.chats || {};
+      state.currentId = d.currentId || null;
+    }
+  } catch (e) {
+    console.warn('load failed', e);
+  }
+  if (!state.chars.length) {
+    const c = sampleChar();
+    state.chars.push(c);
+    state.currentId = c.id;
+  }
+  if (!state.chars.some(c => c.id === state.currentId)) state.currentId = state.chars[0].id;
+  ensureChat(state.currentId);
+}
+
+function save() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+  } catch (e) {
+    setStatus('保存に失敗しました（容量不足の可能性があります）', true);
+  }
+}
+
+/* ---------- ヘルパー ---------- */
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function btn(label, fn, cls) {
+  const b = el('button', cls || null, label);
+  b.type = 'button';
+  b.addEventListener('click', () => fn());
+  return b;
+}
+
+function currentChar() { return state.chars.find(c => c.id === state.currentId); }
+function currentMsgs() { return state.chats[state.currentId] || []; }
+function currentImages() { return imageCache[state.currentId] || []; }
+
+function fill(t, c) {
+  return String(t || '')
+    .replace(/\{\{user\}\}/g, c.userName || 'ユーザー')
+    .replace(/\{\{char\}\}/g, c.name || '');
+}
+
+function ensureChat(id) {
+  const c = state.chars.find(x => x.id === id);
+  if (!c) return;
+  if (!Array.isArray(state.chats[id]) || !state.chats[id].length) {
+    state.chats[id] = c.greeting && c.greeting.trim()
+      ? [{ role: 'model', text: fill(c.greeting, c) }]
+      : [];
+  }
+}
+
+function setStatus(msg, isError) {
+  const s = $('#status');
+  s.textContent = msg || '';
+  s.className = isError ? 'error' : '';
+}
+
+/* ---------- 背景 ---------- */
+function currentBgImage() {
+  const list = currentImages();
+  const msgs = currentMsgs();
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].bg) {
+      const im = list.find(x => x.key === msgs[i].bg);
+      if (im) return im;
+    }
+  }
+  return list.find(x => x.isDefault) || null;
+}
+
+function applyBackground() {
+  const im = currentBgImage();
+  $('#bg').style.backgroundImage = im ? 'url("' + im.url + '")' : 'none';
+}
+
+function extractBg(raw) {
+  const re = /\[\[bg:\s*([^\]\s]*)\s*\]\]/g;
+  let key = null;
+  let m;
+  while ((m = re.exec(raw))) key = m[1];
+  return key;
+}
+
+function stripTags(raw) {
+  return raw.replace(/\[\[bg:[^\]]*\]\]/g, '').replace(/\s+$/, '');
+}
+
+function streamClean(raw) {
+  return stripTags(raw).replace(/\[\[?(?:b(?:g(?::[^\]]*)?)?)?\]?$/, '').replace(/\s+$/, '');
+}
+
+/* ---------- 描画 ---------- */
+function renderSelect() {
+  const sel = $('#charSelect');
+  sel.textContent = '';
+  state.chars.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.id;
+    o.textContent = c.name;
+    if (c.id === state.currentId) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+function toolBtn(label, fn) {
+  const b = el('button', null, label);
+  b.type = 'button';
+  b.addEventListener('click', () => fn());
+  return b;
+}
+
+function renderLog() {
+  applyBackground();
+  const log = $('#log');
+  log.textContent = '';
+  lastTextEl = null;
+  const c = currentChar();
+  const msgs = currentMsgs();
+
+  if (!msgs.length) {
+    log.appendChild(el('div', 'hint', 'メッセージを送って始めましょう'));
+    return;
+  }
+
+  msgs.forEach((m, i) => {
+    const isUser = m.role === 'user';
+    const wrap = el('div', 'msg ' + (isUser ? 'user' : 'model'));
+    wrap.appendChild(el('div', 'name', isUser ? (c.userName || 'あなた') : c.name));
+    const t = el('div', 'text', m.text || '…');
+    wrap.appendChild(t);
+    if (i === msgs.length - 1) lastTextEl = t;
+
+    if (!generating) {
+      const tools = el('div', 'tools');
+      tools.appendChild(toolBtn('編集', () => openMsgEdit(i)));
+      tools.appendChild(toolBtn('削除', () => deleteMsg(i)));
+      if (i === msgs.length - 1) {
+        if (!isUser && i > 0) tools.appendChild(toolBtn('再生成', regenerate));
+        if (isUser) tools.appendChild(toolBtn('返答を生成', generate));
+      }
+      wrap.appendChild(tools);
+    }
+    log.appendChild(wrap);
+  });
+  log.scrollTop = log.scrollHeight;
+}
+
+function renderAll() {
+  ensureChat(state.currentId);
+  renderSelect();
+  renderLog();
+}
+
+function setGenerating(flag) {
+  generating = flag;
+  $('#btnSend').hidden = flag;
+  $('#btnStop').hidden = !flag;
+  ['#charSelect', '#btnEdit', '#btnNew', '#btnReset', '#btnBg'].forEach(s => { $(s).disabled = flag; });
+}
+
+function updateLast(text) {
+  if (!lastTextEl) return;
+  const log = $('#log');
+  const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  lastTextEl.textContent = text || '…';
+  if (nearBottom) log.scrollTop = log.scrollHeight;
+}
+
+/* ---------- Gemini API ---------- */
+function buildBgPrompt(c) {
+  const imgs = (imageCache[c.id] || []).filter(i => i.condition && i.condition.trim());
+  if (!imgs.length) return '';
+  const cur = currentBgImage();
+  const lines = imgs.map(i => '- ' + i.key + '（' + i.name + '）: ' + i.condition.trim());
+  return '【背景画像の切り替え】\n' +
+    '物語の状況に応じて背景画像が切り替わります。下の一覧のうち、条件に当てはまる状況になった返答では、その返答の最後に [[bg:ID]] の形式でIDを1つだけ書いてください。\n' +
+    '条件に当てはまる状況が続いている間や、どの条件にも当てはまらない場合は書かないでください。このタグは表示前に取り除かれるので、地の文やセリフの中には含めないでください。\n' +
+    '一覧:\n' + lines.join('\n') + '\n' +
+    '現在の背景: ' + (cur ? cur.key + '（' + cur.name + '）' : 'なし');
+}
+
+function buildSystem(c) {
+  const parts = [];
+  parts.push('あなたはロールプレイの相手役です。次のキャラクター「' + c.name + '」として会話してください。');
+  parts.push('【キャラクター設定】\n' + fill(c.persona, c));
+  if (c.scenario && c.scenario.trim()) parts.push('【シチュエーション】\n' + fill(c.scenario, c));
+  parts.push('【ユーザー】\n名前: ' + (c.userName || 'ユーザー'));
+  if (c.rules && c.rules.trim()) parts.push('【ルール】\n' + fill(c.rules, c));
+  const bg = buildBgPrompt(c);
+  if (bg) parts.push(bg);
+  return parts.join('\n\n');
+}
+
+function buildContents(msgs) {
+  const out = [];
+  msgs.forEach(m => {
+    if (!m.text || !m.text.trim()) return;
+    const role = m.role === 'user' ? 'user' : 'model';
+    let text = m.text;
+    if (role === 'model' && m.bg) text += '\n[[bg:' + m.bg + ']]';
+    const last = out[out.length - 1];
+    if (last && last.role === role) {
+      last.parts[0].text += '\n' + text;
+    } else {
+      out.push({ role, parts: [{ text }] });
+    }
+  });
+  if (out.length && out[0].role === 'model') {
+    out.unshift({ role: 'user', parts: [{ text: '（ロールプレイを始めます）' }] });
+  }
+  return out;
+}
+
+async function generate() {
+  if (generating) return;
+  const c = currentChar();
+  const s = state.settings;
+  if (!s.apiKey) {
+    setStatus('APIキーを設定してください', true);
+    openSettings();
+    return;
+  }
+
+  const msgs = state.chats[c.id];
+  const body = {
+    systemInstruction: { parts: [{ text: buildSystem(c) }] },
+    contents: buildContents(msgs),
+    generationConfig: { temperature: Number(s.temperature) }
+  };
+  if (s.safety === 'relaxed') {
+    body.safetySettings = [
+      'HARM_CATEGORY_HARASSMENT',
+      'HARM_CATEGORY_HATE_SPEECH',
+      'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+      'HARM_CATEGORY_DANGEROUS_CONTENT'
+    ].map(category => ({ category, threshold: 'BLOCK_ONLY_HIGH' }));
+  }
+
+  const target = { role: 'model', text: '' };
+  msgs.push(target);
+  setGenerating(true);
+  setStatus('');
+  renderLog();
+
+  controller = new AbortController();
+  let raw = '';
+  let finish = '';
+  let blocked = '';
+
+  const finalize = () => {
+    const key = extractBg(raw);
+    if (key && (imageCache[c.id] || []).some(i => i.key === key)) target.bg = key;
+    target.text = stripTags(raw);
+  };
+
+  const processLine = line => {
+    if (!line.startsWith('data:')) return;
+    const data = line.slice(5).trim();
+    if (!data || data === '[DONE]') return;
+    let j;
+    try { j = JSON.parse(data); } catch (_) { return; }
+    if (j.promptFeedback && j.promptFeedback.blockReason) blocked = j.promptFeedback.blockReason;
+    const cand = j.candidates && j.candidates[0];
+    if (!cand) return;
+    if (cand.content && Array.isArray(cand.content.parts)) {
+      cand.content.parts.forEach(p => {
+        if (p.text && !p.thought) {
+          raw += p.text;
+          target.text = streamClean(raw);
+          updateLast(target.text);
+        }
+      });
+    }
+    if (cand.finishReason && cand.finishReason !== 'STOP') finish = cand.finishReason;
+  };
+
+  try {
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+      encodeURIComponent(s.model) + ':streamGenerateContent?alt=sse';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': s.apiKey },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+
+    if (!res.ok) {
+      let m = 'HTTP ' + res.status;
+      try {
+        const j = await res.json();
+        if (j.error && j.error.message) m += ': ' + j.error.message;
+      } catch (_) { /* ignore */ }
+      throw new Error(m);
+    }
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop();
+      lines.forEach(processLine);
+    }
+    if (buf) processLine(buf);
+
+    if (!target.text) {
+      if (blocked) setStatus('入力がブロックされました（' + blocked + '）', true);
+      else if (finish) setStatus('応答が得られませんでした（' + finish + '）', true);
+      else setStatus('応答が空でした', true);
+    } else if (finish === 'MAX_TOKENS') {
+      setStatus('最大トークン数に達したため、途中で切れています', true);
+    } else if (finish) {
+      setStatus('応答が途中で終了しました（' + finish + '）', true);
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') setStatus('停止しました');
+    else setStatus('エラー: ' + err.message, true);
+  } finally {
+    finalize();
+    if (!target.text) {
+      const idx = msgs.indexOf(target);
+      if (idx >= 0) msgs.splice(idx, 1);
+    }
+    controller = null;
+    setGenerating(false);
+    save();
+    renderLog();
+  }
+}
+
+/* ---------- 操作 ---------- */
+function send() {
+  if (generating) return;
+  const input = $('#input');
+  const text = input.value.trim();
+  if (!text) return;
+  currentMsgs().push({ role: 'user', text });
+  input.value = '';
+  autosize();
+  save();
+  renderLog();
+  generate();
+}
+
+function regenerate() {
+  if (generating) return;
+  const msgs = currentMsgs();
+  if (msgs.length > 1 && msgs[msgs.length - 1].role === 'model') {
+    msgs.pop();
+    save();
+    generate();
+  }
+}
+
+function deleteMsg(i) {
+  if (generating) return;
+  if (!confirm('このメッセージを削除しますか？')) return;
+  currentMsgs().splice(i, 1);
+  save();
+  renderLog();
+}
+
+function openMsgEdit(i) {
+  editingMsgIdx = i;
+  $('#mText').value = currentMsgs()[i].text;
+  $('#dlgMsg').showModal();
+}
+
+function saveMsgEdit() {
+  const text = $('#mText').value;
+  if (editingMsgIdx >= 0 && text.trim()) {
+    currentMsgs()[editingMsgIdx].text = text;
+    save();
+    renderLog();
+  }
+  $('#dlgMsg').close();
+}
+
+function resetChat() {
+  if (generating) return;
+  if (!confirm('この会話をリセットしますか？（履歴は消えます）')) return;
+  state.chats[state.currentId] = [];
+  ensureChat(state.currentId);
+  setStatus('');
+  save();
+  renderLog();
+}
+
+function autosize() {
+  const t = $('#input');
+  t.style.height = 'auto';
+  t.style.height = t.scrollHeight + 'px';
+}
+
+async function switchChar(id) {
+  state.currentId = id;
+  ensureChat(id);
+  setStatus('');
+  save();
+  await loadImages(id);
+  renderLog();
+}
+
+/* ---------- キャラクター編集 ---------- */
+function openCharDialog(id) {
+  editingCharId = id;
+  const c = id
+    ? state.chars.find(x => x.id === id)
+    : { name: '', userName: '', persona: '', scenario: '', greeting: '', rules: DEFAULT_RULES };
+  $('#charDlgTitle').textContent = id ? 'キャラクターを編集' : 'キャラクターを追加';
+  $('#cName').value = c.name;
+  $('#cUser').value = c.userName || '';
+  $('#cPersona').value = c.persona || '';
+  $('#cScenario').value = c.scenario || '';
+  $('#cGreeting').value = c.greeting || '';
+  $('#cRules').value = c.rules || '';
+  $('#btnCharDelete').hidden = !id || state.chars.length <= 1;
+  $('#dlgChar').showModal();
+}
+
+async function saveChar() {
+  const name = $('#cName').value.trim();
+  if (!name) { $('#cName').focus(); return; }
+  const data = {
+    name,
+    userName: $('#cUser').value.trim(),
+    persona: $('#cPersona').value,
+    scenario: $('#cScenario').value,
+    greeting: $('#cGreeting').value,
+    rules: $('#cRules').value
+  };
+  if (editingCharId) {
+    Object.assign(state.chars.find(x => x.id === editingCharId), data);
+  } else {
+    const c = Object.assign({ id: uid() }, data);
+    state.chars.push(c);
+    state.currentId = c.id;
+    ensureChat(c.id);
+    await loadImages(c.id);
+  }
+  save();
+  renderAll();
+  $('#dlgChar').close();
+}
+
+async function deleteChar() {
+  if (!editingCharId || state.chars.length <= 1) return;
+  if (!confirm('このキャラクターと会話履歴、背景画像を削除しますか？')) return;
+  const id = editingCharId;
+  try { if (db) await dbDeleteByChar(id); } catch (e) { console.warn(e); }
+  (imageCache[id] || []).forEach(i => { if (i.url) URL.revokeObjectURL(i.url); });
+  delete imageCache[id];
+  state.chars = state.chars.filter(c => c.id !== id);
+  delete state.chats[id];
+  if (state.currentId === id) {
+    state.currentId = state.chars[0].id;
+    await loadImages(state.currentId);
+  }
+  save();
+  renderAll();
+  $('#dlgChar').close();
+}
+
+/* ---------- 背景画像の管理 ---------- */
+function renderImageList() {
+  const c = currentChar();
+  const box = $('#imgList');
+  box.textContent = '';
+  $('#imgDlgTitle').textContent = '背景画像（' + c.name + '）';
+  const list = currentImages();
+  if (!list.length) {
+    box.appendChild(el('div', 'note', '画像がありません。「画像を追加」から登録してください。'));
+    return;
+  }
+  list.forEach(im => {
+    const row = el('div', 'imgrow');
+    const th = document.createElement('img');
+    th.className = 'thumb';
+    th.src = im.url;
+    th.alt = im.name;
+    row.appendChild(th);
+
+    const info = el('div', 'info');
+    info.appendChild(el('div', 'iname', im.key + '：' + im.name + (im.isDefault ? '（初期背景）' : '')));
+    info.appendChild(el('div', 'icond', im.condition ? '条件: ' + im.condition : '条件未設定（自動では切り替わりません）'));
+    row.appendChild(info);
+
+    const btns = el('div', 'ibtns');
+    btns.appendChild(btn('設定', () => openImgEdit(im.id)));
+    row.appendChild(btns);
+    box.appendChild(row);
+  });
+}
+
+function openImages() {
+  renderImageList();
+  $('#dlgImages').showModal();
+}
+
+async function addImages(files) {
+  if (!db) { setStatus('画像の保存領域が使えません', true); return; }
+  const c = currentChar();
+  const list = imageCache[c.id] || (imageCache[c.id] = []);
+  let last = null;
+  let added = 0;
+  setStatus('画像を処理中…');
+  for (const file of files) {
+    try {
+      const blob = await resizeImage(file, 1600, 0.85);
+      const n = Math.max(c.imgSeq || 0, ...list.map(i => keyNum(i.key))) + 1;
+      c.imgSeq = n;
+      const rec = {
+        id: uid(),
+        charId: c.id,
+        key: 'bg' + n,
+        name: file.name.replace(/\.[^.]+$/, '') || ('bg' + n),
+        condition: '',
+        isDefault: false,
+        blob
+      };
+      await dbPut(rec);
+      rec.url = URL.createObjectURL(blob);
+      list.push(rec);
+      last = rec;
+      added++;
+    } catch (err) {
+      setStatus(file.name + ': ' + err.message, true);
+    }
+  }
+  save();
+  renderImageList();
+  if (added) setStatus('');
+  if (added === 1 && last) openImgEdit(last.id);
+}
+
+function openImgEdit(id) {
+  const im = currentImages().find(x => x.id === id);
+  if (!im) return;
+  editingImgId = id;
+  $('#iPreview').src = im.url;
+  $('#iName').value = im.name;
+  $('#iCond').value = im.condition || '';
+  $('#iDefault').checked = !!im.isDefault;
+  $('#dlgImg').showModal();
+}
+
+async function saveImgEdit() {
+  const list = currentImages();
+  const im = list.find(x => x.id === editingImgId);
+  if (!im) { $('#dlgImg').close(); return; }
+  im.name = $('#iName').value.trim() || im.key;
+  im.condition = $('#iCond').value.trim();
+  const wantDefault = $('#iDefault').checked;
+  const changed = [im];
+  if (wantDefault && !im.isDefault) {
+    list.forEach(x => {
+      if (x !== im && x.isDefault) { x.isDefault = false; changed.push(x); }
+    });
+  }
+  im.isDefault = wantDefault;
+  try {
+    for (const x of changed) await dbPut(x);
+  } catch (err) {
+    setStatus('画像設定の保存に失敗しました: ' + err.message, true);
+  }
+  renderImageList();
+  applyBackground();
+  $('#dlgImg').close();
+}
+
+async function deleteImg() {
+  const list = currentImages();
+  const im = list.find(x => x.id === editingImgId);
+  if (!im) return;
+  if (!confirm('この背景画像を削除しますか？')) return;
+  try { await dbDelete(im.id); } catch (err) { setStatus('削除に失敗しました: ' + err.message, true); return; }
+  if (im.url) URL.revokeObjectURL(im.url);
+  imageCache[state.currentId] = list.filter(x => x.id !== im.id);
+  renderImageList();
+  applyBackground();
+  $('#dlgImg').close();
+}
+
+/* ---------- 設定 ---------- */
+function openSettings() {
+  const s = state.settings;
+  $('#sKey').value = s.apiKey;
+  $('#sModel').value = s.model;
+  $('#sTemp').value = s.temperature;
+  $('#sTempVal').textContent = Number(s.temperature).toFixed(1);
+  $('#sSafety').value = s.safety;
+  if (!$('#dlgSettings').open) $('#dlgSettings').showModal();
+}
+
+function bindSettings() {
+  $('#sKey').addEventListener('input', e => { state.settings.apiKey = e.target.value.trim(); save(); });
+  $('#sModel').addEventListener('input', e => {
+    state.settings.model = e.target.value.trim() || 'gemini-2.5-flash';
+    save();
+  });
+  $('#sTemp').addEventListener('input', e => {
+    state.settings.temperature = Number(e.target.value);
+    $('#sTempVal').textContent = Number(e.target.value).toFixed(1);
+    save();
+  });
+  $('#sSafety').addEventListener('change', e => { state.settings.safety = e.target.value; save(); });
+}
+
+async function exportData() {
+  try {
+    setStatus('エクスポート中…');
+    const images = [];
+    if (db) {
+      const all = await dbGetAll();
+      for (const r of all) {
+        const { blob, url, ...rest } = r;
+        images.push(Object.assign(rest, { data: await blobToDataURL(blob) }));
+      }
+    }
+    const data = { chars: state.chars, chats: state.chats, images };
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'roleplay-chat-backup.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    setStatus('');
+  } catch (err) {
+    setStatus('エクスポートに失敗しました: ' + err.message, true);
+  }
+}
+
+async function importData(file) {
+  try {
+    setStatus('インポート中…');
+    const d = JSON.parse(await file.text());
+    if (!Array.isArray(d.chars)) throw new Error('ファイルの形式が違います');
+    d.chars.forEach(c => {
+      if (!c || !c.id || !c.name) return;
+      const i = state.chars.findIndex(x => x.id === c.id);
+      if (i >= 0) state.chars[i] = c; else state.chars.push(c);
+    });
+    Object.keys(d.chats || {}).forEach(k => {
+      if (Array.isArray(d.chats[k])) state.chats[k] = d.chats[k];
+    });
+    if (db && Array.isArray(d.images)) {
+      for (const im of d.images) {
+        if (!im || !im.id || !im.charId || !im.key || !im.data) continue;
+        const { data, ...rest } = im;
+        await dbPut(Object.assign(rest, { blob: dataURLToBlob(data) }));
+      }
+    }
+    save();
+    await loadImages(state.currentId);
+    renderAll();
+    setStatus('インポートしました');
+  } catch (err) {
+    setStatus('インポートに失敗しました: ' + err.message, true);
+  }
+}
+
+/* ---------- イベント ---------- */
+function bindEvents() {
+  $('#charSelect').addEventListener('change', e => { switchChar(e.target.value); });
+  $('#btnEdit').addEventListener('click', () => openCharDialog(state.currentId));
+  $('#btnNew').addEventListener('click', () => openCharDialog(null));
+  $('#btnReset').addEventListener('click', resetChat);
+  $('#btnBg').addEventListener('click', openImages);
+  $('#btnSettings').addEventListener('click', openSettings);
+
+  $('#btnSend').addEventListener('click', send);
+  $('#btnStop').addEventListener('click', () => { if (controller) controller.abort(); });
+  $('#input').addEventListener('input', autosize);
+  $('#input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      send();
+    }
+  });
+
+  $('#btnSettingsClose').addEventListener('click', () => $('#dlgSettings').close());
+  $('#btnExport').addEventListener('click', exportData);
+  $('#btnImport').addEventListener('click', () => $('#fileImport').click());
+  $('#fileImport').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (f) importData(f);
+    e.target.value = '';
+  });
+
+  $('#btnCharSave').addEventListener('click', saveChar);
+  $('#btnCharCancel').addEventListener('click', () => $('#dlgChar').close());
+  $('#btnCharDelete').addEventListener('click', deleteChar);
+
+  $('#btnImgAdd').addEventListener('click', () => $('#fileImg').click());
+  $('#fileImg').addEventListener('change', e => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length) addImages(files);
+  });
+  $('#btnImagesClose').addEventListener('click', () => $('#dlgImages').close());
+  $('#btnImgSave').addEventListener('click', saveImgEdit);
+  $('#btnImgCancel').addEventListener('click', () => $('#dlgImg').close());
+  $('#btnImgDelete').addEventListener('click', deleteImg);
+
+  $('#btnMsgSave').addEventListener('click', saveMsgEdit);
+  $('#btnMsgCancel').addEventListener('click', () => $('#dlgMsg').close());
+
+  bindSettings();
+}
+
+/* ---------- 起動 ---------- */
+async function init() {
+  load();
+  bindEvents();
+  let dbError = false;
+  try {
+    db = await openDB();
+  } catch (e) {
+    db = null;
+    dbError = true;
+  }
+  await loadImages(state.currentId);
+  renderAll();
+  if (dbError) setStatus('画像の保存領域を開けませんでした（背景画像は使えません）', true);
+  else if (!state.settings.apiKey) setStatus('「設定」からGemini APIキーを入力してください');
+}
+init();
+</script>
+</body>
+</html>
