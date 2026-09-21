@@ -92,6 +92,11 @@ dialog .note{font-size:12px;color:var(--sub);margin-top:4px}
 .icond{font-size:12px;color:var(--sub);margin-top:2px;white-space:pre-wrap}
 .ibtns{display:flex;flex-direction:column;gap:4px;flex:none}
 .preview{display:block;max-width:100%;max-height:30vh;margin:8px auto 0;border-radius:6px}
+
+#btnShowChat{position:fixed;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:10;display:none;background:var(--model)}
+body.bgonly{padding:0}
+body.bgonly header,body.bgonly #log,body.bgonly #status,body.bgonly footer{display:none}
+body.bgonly #btnShowChat{display:block}
 </style>
 </head>
 <body>
@@ -102,6 +107,7 @@ dialog .note{font-size:12px;color:var(--sub);margin-top:4px}
   <button id="btnNew">新規</button>
   <button id="btnReset">リセット</button>
   <button id="btnBg">背景</button>
+  <button id="btnHide">非表示</button>
   <button id="btnSettings">設定</button>
 </header>
 
@@ -110,6 +116,7 @@ dialog .note{font-size:12px;color:var(--sub);margin-top:4px}
   <main id="log"></main>
 </div>
 <div id="status" role="status"></div>
+<button id="btnShowChat">チャットを表示</button>
 
 <footer>
   <textarea id="input" rows="1" placeholder="メッセージを入力（Ctrl+Enterで送信）"></textarea>
@@ -795,6 +802,14 @@ function autosize() {
   t.style.height = t.scrollHeight + 'px';
 }
 
+function setBgOnly(flag) {
+  document.body.classList.toggle('bgonly', flag);
+  if (!flag) {
+    const log = $('#log');
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
 async function switchChar(id) {
   state.currentId = id;
   ensureChat(id);
@@ -1071,6 +1086,11 @@ function bindEvents() {
   $('#btnNew').addEventListener('click', () => openCharDialog(null));
   $('#btnReset').addEventListener('click', resetChat);
   $('#btnBg').addEventListener('click', openImages);
+  $('#btnHide').addEventListener('click', () => setBgOnly(true));
+  $('#btnShowChat').addEventListener('click', () => setBgOnly(false));
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.body.classList.contains('bgonly')) setBgOnly(false);
+  });
   $('#btnSettings').addEventListener('click', openSettings);
 
   $('#btnSend').addEventListener('click', send);
