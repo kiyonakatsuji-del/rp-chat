@@ -148,6 +148,10 @@ body.bgonly #btnShowChat{display:block}
       <option value="relaxed">緩め（高リスクのみブロック）</option>
     </select>
   </label>
+  <label>VOICEVOX読み上げAPIキー（tts.quest・任意）
+    <input type="password" id="sTtsKey" autocomplete="off" placeholder="未入力でも動作（低速）">
+  </label>
+  <div class="note">tts.questのVOICEVOX Web APIを使って、キャラクターの返答を声で読み上げます。<a href="https://voicevox.su-shiki.com/su-shikiapis/" target="_blank" rel="noopener">こちら</a>で無料のAPIキーを取得すると高速になります（無くても使えます）。</div>
   <div class="note">エクスポートにはキャラクター、会話履歴、背景画像が含まれます（APIキーは含まれません）。画像が多いとファイルが大きくなります。</div>
   <div class="row">
     <button id="btnExport" class="left">エクスポート</button>
@@ -179,6 +183,25 @@ body.bgonly #btnShowChat{display:block}
     <textarea id="cRules" rows="5"></textarea>
   </label>
   <div class="note">{{user}} はあなたの名前、{{char}} はキャラクター名に置き換わります。最初のメッセージは新規作成時とリセット時に使われます。</div>
+  <label>声（VOICEVOX読み上げ）
+    <select id="cSpeaker">
+      <option value="">使わない</option>
+      <option value="3">ずんだもん（ノーマル）</option>
+      <option value="1">ずんだもん（あまあま）</option>
+      <option value="7">ずんだもん（ツンツン）</option>
+      <option value="2">四国めたん（ノーマル）</option>
+      <option value="0">四国めたん（あまあま）</option>
+      <option value="6">四国めたん（ツンツン）</option>
+      <option value="8">春日部つむぎ</option>
+      <option value="10">雨晴はう</option>
+      <option value="9">波音リツ</option>
+      <option value="11">玄野武宏</option>
+      <option value="13">青山龍星</option>
+      <option value="14">冥鳴ひまり</option>
+      <option value="16">九州そら（ノーマル）</option>
+    </select>
+  </label>
+  <div class="note">選ぶと、この返答の下に🔊ボタンが出て、押すとその声で読み上げます。</div>
   <div class="row">
     <button id="btnCharDelete" class="danger left">削除</button>
     <button id="btnCharCancel">キャンセル</button>
@@ -241,7 +264,7 @@ const DEFAULT_RULES =
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 let state = {
-  settings: { apiKey: '', model: 'gemini-2.5-flash', temperature: 1, safety: 'default' },
+  settings: { apiKey: '', model: 'gemini-2.5-flash', temperature: 1, safety: 'default', ttsApiKey: '' },
   chars: [],
   chats: {},
   currentId: null
@@ -387,7 +410,8 @@ function sampleChar() {
     persona: '海辺の小さな古書店を営む30代の店主。穏やかで少し皮肉屋。本の話になると饒舌になる。丁寧な標準語で話す。',
     scenario: '雨の日の夕方。客のいない店内に、常連の{{user}}が入ってきたところ。',
     greeting: '*ドアのベルが鳴り、本から顔を上げる*\n「いらっしゃい。……ああ、{{user}}ですか。ちょうどお茶を淹れたところですよ」',
-    rules: DEFAULT_RULES
+    rules: DEFAULT_RULES,
+    speakerId: ''
   };
 }
 
@@ -460,6 +484,67 @@ function setStatus(msg, isError) {
   const s = $('#status');
   s.textContent = msg || '';
   s.className = isError ? 'error' : '';
+}
+
+/* ---------- VOICEVOX読み上げ（tts.quest） ---------- */
+let activeSpeak = null; // { btn, audio }
+
+function resetSpeakBtn() {
+  if (activeSpeak) {
+    activeSpeak.btn.textContent = '🔊';
+    activeSpeak.btn.disabled = false;
+    if (activeSpeak.audio) activeSpeak.audio.pause();
+  }
+  activeSpeak = null;
+}
+
+async function handleSpeakClick(text, speakerId, btn) {
+  if (activeSpeak && activeSpeak.btn === btn) {
+    resetSpeakBtn();
+    return;
+  }
+  resetSpeakBtn();
+  if (!text || !text.trim()) return;
+
+  btn.textContent = '…';
+  btn.disabled = true;
+  setStatus('読み上げを準備中…');
+
+  try {
+    const key = state.settings.ttsApiKey ? '&key=' + encodeURIComponent(state.settings.ttsApiKey) : '';
+    const url = 'https://api.tts.quest/v3/voicevox/synthesis?speaker=' +
+      encodeURIComponent(speakerId) + '&text=' + encodeURIComponent(text) + key;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.errorMessage || '合成に失敗しました');
+
+    let ready = false;
+    for (let i = 0; i < 40; i++) {
+      try {
+        const check = await fetch(data.mp3DownloadUrl, { method: 'HEAD' });
+        if (check.ok) { ready = true; break; }
+      } catch (_) { /* まだ準備中 */ }
+      await new Promise(r => setTimeout(r, 700));
+    }
+    if (!ready) throw new Error('音声の生成がタイムアウトしました');
+
+    const audio = new Audio(data.mp3DownloadUrl);
+    activeSpeak = { btn, audio };
+    audio.addEventListener('ended', () => { if (activeSpeak && activeSpeak.audio === audio) resetSpeakBtn(); });
+    audio.addEventListener('error', () => {
+      setStatus('音声の再生に失敗しました', true);
+      if (activeSpeak && activeSpeak.audio === audio) resetSpeakBtn();
+    });
+    btn.textContent = '■';
+    btn.disabled = false;
+    setStatus('');
+    await audio.play();
+  } catch (err) {
+    setStatus('読み上げエラー: ' + err.message, true);
+    if (activeSpeak && activeSpeak.btn === btn) resetSpeakBtn();
+    else { btn.textContent = '🔊'; btn.disabled = false; }
+  }
 }
 
 /* ---------- 背景 ---------- */
@@ -541,6 +626,12 @@ function renderLog() {
       const tools = el('div', 'tools');
       tools.appendChild(toolBtn('編集', () => openMsgEdit(i)));
       tools.appendChild(toolBtn('削除', () => deleteMsg(i)));
+      if (!isUser && c.speakerId && m.text) {
+        const sb = el('button', null, '🔊');
+        sb.type = 'button';
+        sb.addEventListener('click', () => handleSpeakClick(m.text, c.speakerId, sb));
+        tools.appendChild(sb);
+      }
       if (i === msgs.length - 1) {
         if (!isUser && i > 0) tools.appendChild(toolBtn('再生成', regenerate));
         if (isUser) tools.appendChild(toolBtn('返答を生成', generate));
@@ -832,6 +923,7 @@ function openCharDialog(id) {
   $('#cScenario').value = c.scenario || '';
   $('#cGreeting').value = c.greeting || '';
   $('#cRules').value = c.rules || '';
+  $('#cSpeaker').value = c.speakerId || '';
   $('#btnCharDelete').hidden = !id || state.chars.length <= 1;
   $('#dlgChar').showModal();
 }
@@ -845,7 +937,8 @@ async function saveChar() {
     persona: $('#cPersona').value,
     scenario: $('#cScenario').value,
     greeting: $('#cGreeting').value,
-    rules: $('#cRules').value
+    rules: $('#cRules').value,
+    speakerId: $('#cSpeaker').value
   };
   if (editingCharId) {
     Object.assign(state.chars.find(x => x.id === editingCharId), data);
@@ -1007,6 +1100,7 @@ function openSettings() {
   $('#sTemp').value = s.temperature;
   $('#sTempVal').textContent = Number(s.temperature).toFixed(1);
   $('#sSafety').value = s.safety;
+  $('#sTtsKey').value = s.ttsApiKey || '';
   if (!$('#dlgSettings').open) $('#dlgSettings').showModal();
 }
 
@@ -1022,6 +1116,7 @@ function bindSettings() {
     save();
   });
   $('#sSafety').addEventListener('change', e => { state.settings.safety = e.target.value; save(); });
+  $('#sTtsKey').addEventListener('input', e => { state.settings.ttsApiKey = e.target.value.trim(); save(); });
 }
 
 async function exportData() {
