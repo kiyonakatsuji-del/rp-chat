@@ -201,7 +201,10 @@ body.bgonly #btnShowChat{display:block}
       <option value="16">九州そら（ノーマル）</option>
     </select>
   </label>
-  <div class="note">選ぶと、この返答の下に🔊ボタンが出て、押すとその声で読み上げます。</div>
+  <label>声ID直接入力（上の一覧にない声を使いたい場合）
+    <input type="text" id="cSpeakerCustom" autocomplete="off" inputmode="numeric" placeholder="例: 52">
+  </label>
+  <div class="note">選ぶと、この返答の下に🔊ボタンが出て、押すとその声で読み上げます。一覧はVOICEVOXの声一覧を起動時に取得して自動で更新します（取得できない時は代表的な声のみ表示）。直接入力欄に番号を入れると、そちらが優先されます。</div>
   <div class="row">
     <button id="btnCharDelete" class="danger left">削除</button>
     <button id="btnCharCancel">キャンセル</button>
@@ -276,6 +279,7 @@ let editingCharId = null;
 let editingMsgIdx = -1;
 let editingImgId = null;
 let db = null;
+let speakerCatalog = null; // VOICEVOXの話者一覧（起動時に取得できれば）
 const imageCache = {}; // charId -> [{id, charId, key, name, condition, isDefault, blob, url}]
 
 /* ---------- IndexedDB（背景画像） ---------- */
@@ -480,13 +484,76 @@ function ensureChat(id) {
   }
 }
 
+/* ---------- VOICEVOX話者一覧の取得 ---------- */
 function setStatus(msg, isError) {
   const s = $('#status');
   s.textContent = msg || '';
   s.className = isError ? 'error' : '';
 }
 
-/* ---------- VOICEVOX読み上げ（tts.quest） ---------- */
+async function ensureSpeakerCatalog() {
+  try {
+    const res = await fetch('https://api.su-shiki.com/v2/voicevox/speakers/');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (!Array.isArray(data)) throw new Error('unexpected format');
+    const list = [];
+    data.forEach(sp => {
+      if (!sp || !Array.isArray(sp.styles)) return;
+      sp.styles.forEach(st => {
+        if (st && st.id !== undefined && st.id !== null) {
+          list.push({ id: String(st.id), charName: sp.name || '(不明)', styleName: st.name || '' });
+        }
+      });
+    });
+    if (list.length) {
+      speakerCatalog = list;
+      applySpeakerCatalogToSelect();
+    }
+  } catch (e) {
+    console.warn('speaker catalog fetch failed', e);
+  }
+}
+
+function applySpeakerCatalogToSelect() {
+  if (!speakerCatalog) return;
+  const sel = $('#cSpeaker');
+  if (!sel) return;
+  const current = sel.value;
+  sel.textContent = '';
+  const noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = '使わない';
+  sel.appendChild(noneOpt);
+
+  const groups = new Map();
+  speakerCatalog.forEach(s => {
+    if (!groups.has(s.charName)) groups.set(s.charName, []);
+    groups.get(s.charName).push(s);
+  });
+  groups.forEach((styles, charName) => {
+    const og = document.createElement('optgroup');
+    og.label = charName;
+    styles.forEach(s => {
+      const o = document.createElement('option');
+      o.value = s.id;
+      o.textContent = (s.styleName && s.styleName !== 'ノーマル') ? (charName + '（' + s.styleName + '）') : charName;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  });
+
+  if ([...sel.options].some(o => o.value === current)) sel.value = current;
+}
+
+function setCharSpeakerFields(id) {
+  const sel = $('#cSpeaker');
+  sel.value = id || '';
+  const matched = sel.value === (id || '');
+  $('#cSpeakerCustom').value = matched ? '' : (id || '');
+}
+
+
 let activeSpeak = null; // { btn, audio }
 
 function resetSpeakBtn() {
@@ -923,7 +990,7 @@ function openCharDialog(id) {
   $('#cScenario').value = c.scenario || '';
   $('#cGreeting').value = c.greeting || '';
   $('#cRules').value = c.rules || '';
-  $('#cSpeaker').value = c.speakerId || '';
+  setCharSpeakerFields(c.speakerId || '');
   $('#btnCharDelete').hidden = !id || state.chars.length <= 1;
   $('#dlgChar').showModal();
 }
@@ -938,7 +1005,7 @@ async function saveChar() {
     scenario: $('#cScenario').value,
     greeting: $('#cGreeting').value,
     rules: $('#cRules').value,
-    speakerId: $('#cSpeaker').value
+    speakerId: $('#cSpeakerCustom').value.trim() || $('#cSpeaker').value
   };
   if (editingCharId) {
     Object.assign(state.chars.find(x => x.id === editingCharId), data);
@@ -1241,6 +1308,7 @@ async function init() {
   }
   await loadImages(state.currentId);
   renderAll();
+  ensureSpeakerCatalog();
   if (dbError) setStatus('画像の保存領域を開けませんでした（背景画像は使えません）', true);
   else if (!state.settings.apiKey) setStatus('「設定」からGemini APIキーを入力してください');
 }
