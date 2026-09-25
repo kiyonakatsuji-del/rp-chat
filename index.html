@@ -39,6 +39,7 @@ button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-vis
 
 header{display:flex;flex-wrap:wrap;gap:6px;padding:8px;border-bottom:1px solid var(--line)}
 header select{flex:1;min-width:120px}
+#threadBar select{flex:1;min-width:100px}
 
 select,input[type=text],input[type=password],textarea{
   font:inherit;font-size:16px;padding:6px 8px;
@@ -105,10 +106,16 @@ body.bgonly #btnShowChat{display:block}
   <select id="charSelect" aria-label="キャラクター"></select>
   <button id="btnEdit">編集</button>
   <button id="btnNew">新規</button>
-  <button id="btnReset">リセット</button>
   <button id="btnBg">背景</button>
   <button id="btnHide">非表示</button>
   <button id="btnSettings">設定</button>
+</header>
+<header id="threadBar">
+  <select id="threadSelect" aria-label="スレッド"></select>
+  <button id="btnThreadNew">＋スレッド</button>
+  <button id="btnThreadRename">名前変更</button>
+  <button id="btnThreadDelete">削除</button>
+  <button id="btnReset">リセット</button>
 </header>
 
 <div id="stage">
@@ -121,6 +128,7 @@ body.bgonly #btnShowChat{display:block}
 <footer>
   <textarea id="input" rows="1" placeholder="メッセージを入力（Ctrl+Enterで送信）"></textarea>
   <button id="btnSend" class="primary">送信</button>
+  <button id="btnContinue" title="何も言わずに続きを促す">続ける</button>
   <button id="btnStop" hidden>停止</button>
 </footer>
 
@@ -204,6 +212,7 @@ body.bgonly #btnShowChat{display:block}
   <label>声ID直接入力（上の一覧にない声を使いたい場合）
     <input type="text" id="cSpeakerCustom" autocomplete="off" inputmode="numeric" placeholder="例: 52">
   </label>
+  <button type="button" id="btnSpeakPreview">試聴</button>
   <div class="note">選ぶと、この返答の下に🔊ボタンが出て、押すとその声で読み上げます。一覧はVOICEVOXの声一覧を起動時に取得して自動で更新します（取得できない時は代表的な声のみ表示）。直接入力欄に番号を入れると、そちらが優先されます。</div>
   <div class="row">
     <button id="btnCharDelete" class="danger left">削除</button>
@@ -419,6 +428,24 @@ function sampleChar() {
   };
 }
 
+function normalizeChats() {
+  Object.keys(state.chats).forEach(id => {
+    const v = state.chats[id];
+    if (Array.isArray(v)) {
+      const tid = uid();
+      state.chats[id] = {
+        threads: [{ id: tid, name: '会話1', msgs: v, summary: '', summarizedUpTo: 0 }],
+        currentThreadId: tid
+      };
+    } else if (v && Array.isArray(v.threads)) {
+      v.threads.forEach(t => {
+        if (typeof t.summary !== 'string') t.summary = '';
+        if (typeof t.summarizedUpTo !== 'number') t.summarizedUpTo = 0;
+      });
+    }
+  });
+}
+
 function load() {
   try {
     const raw = localStorage.getItem(LS_KEY);
@@ -432,6 +459,7 @@ function load() {
   } catch (e) {
     console.warn('load failed', e);
   }
+  normalizeChats();
   if (!state.chars.length) {
     const c = sampleChar();
     state.chars.push(c);
@@ -465,7 +493,12 @@ function btn(label, fn, cls) {
 }
 
 function currentChar() { return state.chars.find(c => c.id === state.currentId); }
-function currentMsgs() { return state.chats[state.currentId] || []; }
+function currentThread() {
+  const bucket = state.chats[state.currentId];
+  if (!bucket || !bucket.threads || !bucket.threads.length) return null;
+  return bucket.threads.find(t => t.id === bucket.currentThreadId) || bucket.threads[0];
+}
+function currentMsgs() { const t = currentThread(); return t ? t.msgs : []; }
 function currentImages() { return imageCache[state.currentId] || []; }
 
 function fill(t, c) {
@@ -477,11 +510,74 @@ function fill(t, c) {
 function ensureChat(id) {
   const c = state.chars.find(x => x.id === id);
   if (!c) return;
-  if (!Array.isArray(state.chats[id]) || !state.chats[id].length) {
-    state.chats[id] = c.greeting && c.greeting.trim()
-      ? [{ role: 'model', text: fill(c.greeting, c) }]
-      : [];
+  let bucket = state.chats[id];
+  if (!bucket || !Array.isArray(bucket.threads) || !bucket.threads.length) {
+    const t = { id: uid(), name: '会話1', msgs: [], summary: '', summarizedUpTo: 0 };
+    bucket = { threads: [t], currentThreadId: t.id };
+    state.chats[id] = bucket;
   }
+  if (!bucket.threads.some(t => t.id === bucket.currentThreadId)) {
+    bucket.currentThreadId = bucket.threads[0].id;
+  }
+  const t = bucket.threads.find(x => x.id === bucket.currentThreadId);
+  if (typeof t.summary !== 'string') t.summary = '';
+  if (typeof t.summarizedUpTo !== 'number') t.summarizedUpTo = 0;
+  if (!t.msgs.length && c.greeting && c.greeting.trim()) {
+    t.msgs = [{ role: 'model', text: fill(c.greeting, c) }];
+  }
+}
+
+function newThread() {
+  const c = currentChar();
+  const bucket = state.chats[state.currentId];
+  const defaultName = '会話' + (bucket.threads.length + 1);
+  const name = (prompt('新しいスレッドの名前', defaultName) || '').trim() || defaultName;
+  const t = {
+    id: uid(),
+    name,
+    msgs: c.greeting && c.greeting.trim() ? [{ role: 'model', text: fill(c.greeting, c) }] : [],
+    summary: '',
+    summarizedUpTo: 0
+  };
+  bucket.threads.push(t);
+  bucket.currentThreadId = t.id;
+  setStatus('');
+  save();
+  renderThreadSelect();
+  renderLog();
+}
+
+function renameThread() {
+  const t = currentThread();
+  if (!t) return;
+  const name = (prompt('スレッド名を変更', t.name) || '').trim();
+  if (!name) return;
+  t.name = name;
+  save();
+  renderThreadSelect();
+}
+
+function deleteThread() {
+  const bucket = state.chats[state.currentId];
+  if (!bucket || bucket.threads.length <= 1) {
+    setStatus('最後の1つのスレッドは削除できません', true);
+    return;
+  }
+  if (!confirm('このスレッドを削除しますか？（履歴も消えます）')) return;
+  const idx = bucket.threads.findIndex(t => t.id === bucket.currentThreadId);
+  bucket.threads.splice(idx, 1);
+  bucket.currentThreadId = bucket.threads[Math.max(0, idx - 1)].id;
+  save();
+  renderThreadSelect();
+  renderLog();
+}
+
+function switchThread(id) {
+  const bucket = state.chats[state.currentId];
+  if (!bucket) return;
+  bucket.currentThreadId = id;
+  save();
+  renderLog();
 }
 
 /* ---------- VOICEVOX話者一覧の取得 ---------- */
@@ -554,18 +650,20 @@ function setCharSpeakerFields(id) {
 }
 
 
-let activeSpeak = null; // { btn, audio }
+let activeSpeak = null; // { btn, audio, restingLabel }
 
 function resetSpeakBtn() {
   if (activeSpeak) {
-    activeSpeak.btn.textContent = '🔊';
+    activeSpeak.btn.textContent = activeSpeak.restingLabel;
     activeSpeak.btn.disabled = false;
     if (activeSpeak.audio) activeSpeak.audio.pause();
   }
   activeSpeak = null;
 }
 
-async function handleSpeakClick(text, speakerId, btn) {
+async function handleSpeakClick(text, speakerId, btn, restingLabel) {
+  restingLabel = restingLabel || '🔊';
+  if (!speakerId) { setStatus('声が設定されていません', true); return; }
   if (activeSpeak && activeSpeak.btn === btn) {
     resetSpeakBtn();
     return;
@@ -597,7 +695,7 @@ async function handleSpeakClick(text, speakerId, btn) {
     if (!ready) throw new Error('音声の生成がタイムアウトしました');
 
     const audio = new Audio(data.mp3DownloadUrl);
-    activeSpeak = { btn, audio };
+    activeSpeak = { btn, audio, restingLabel };
     audio.addEventListener('ended', () => { if (activeSpeak && activeSpeak.audio === audio) resetSpeakBtn(); });
     audio.addEventListener('error', () => {
       setStatus('音声の再生に失敗しました', true);
@@ -610,7 +708,7 @@ async function handleSpeakClick(text, speakerId, btn) {
   } catch (err) {
     setStatus('読み上げエラー: ' + err.message, true);
     if (activeSpeak && activeSpeak.btn === btn) resetSpeakBtn();
-    else { btn.textContent = '🔊'; btn.disabled = false; }
+    else { btn.textContent = restingLabel; btn.disabled = false; }
   }
 }
 
@@ -661,11 +759,39 @@ function renderSelect() {
   });
 }
 
+function renderThreadSelect() {
+  const bucket = state.chats[state.currentId];
+  const sel = $('#threadSelect');
+  sel.textContent = '';
+  if (!bucket) return;
+  bucket.threads.forEach(t => {
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = t.name;
+    if (t.id === bucket.currentThreadId) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
 function toolBtn(label, fn) {
   const b = el('button', null, label);
   b.type = 'button';
   b.addEventListener('click', () => fn());
   return b;
+}
+
+function appendFormattedText(container, text) {
+  const re = /\*([\s\S]+?)\*/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) container.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const em = document.createElement('em');
+    em.textContent = m[1];
+    container.appendChild(em);
+    last = re.lastIndex;
+  }
+  if (last < text.length) container.appendChild(document.createTextNode(text.slice(last)));
 }
 
 function renderLog() {
@@ -685,7 +811,8 @@ function renderLog() {
     const isUser = m.role === 'user';
     const wrap = el('div', 'msg ' + (isUser ? 'user' : 'model'));
     wrap.appendChild(el('div', 'name', isUser ? (c.userName || 'あなた') : c.name));
-    const t = el('div', 'text', m.text || '…');
+    const t = el('div', 'text');
+    appendFormattedText(t, m.text || '…');
     wrap.appendChild(t);
     if (i === msgs.length - 1) lastTextEl = t;
 
@@ -713,21 +840,27 @@ function renderLog() {
 function renderAll() {
   ensureChat(state.currentId);
   renderSelect();
+  renderThreadSelect();
   renderLog();
 }
 
 function setGenerating(flag) {
   generating = flag;
   $('#btnSend').hidden = flag;
+  $('#btnContinue').hidden = flag;
   $('#btnStop').hidden = !flag;
-  ['#charSelect', '#btnEdit', '#btnNew', '#btnReset', '#btnBg'].forEach(s => { $(s).disabled = flag; });
+  [
+    '#charSelect', '#btnEdit', '#btnNew', '#btnBg',
+    '#threadSelect', '#btnThreadNew', '#btnThreadRename', '#btnThreadDelete', '#btnReset'
+  ].forEach(s => { $(s).disabled = flag; });
 }
 
 function updateLast(text) {
   if (!lastTextEl) return;
   const log = $('#log');
   const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
-  lastTextEl.textContent = text || '…';
+  lastTextEl.textContent = '';
+  appendFormattedText(lastTextEl, text || '…');
   if (nearBottom) log.scrollTop = log.scrollHeight;
 }
 
@@ -744,19 +877,20 @@ function buildBgPrompt(c) {
     '現在の背景: ' + (cur ? cur.key + '（' + cur.name + '）' : 'なし');
 }
 
-function buildSystem(c) {
+function buildSystem(c, thread) {
   const parts = [];
   parts.push('あなたはロールプレイの相手役です。次のキャラクター「' + c.name + '」として会話してください。');
   parts.push('【キャラクター設定】\n' + fill(c.persona, c));
   if (c.scenario && c.scenario.trim()) parts.push('【シチュエーション】\n' + fill(c.scenario, c));
   parts.push('【ユーザー】\n名前: ' + (c.userName || 'ユーザー'));
   if (c.rules && c.rules.trim()) parts.push('【ルール】\n' + fill(c.rules, c));
+  if (thread && thread.summary) parts.push('【これまでの会話の要約】\n' + thread.summary);
   const bg = buildBgPrompt(c);
   if (bg) parts.push(bg);
   return parts.join('\n\n');
 }
 
-function buildContents(msgs) {
+function buildContents(msgs, extra) {
   const out = [];
   msgs.forEach(m => {
     if (!m.text || !m.text.trim()) return;
@@ -773,11 +907,73 @@ function buildContents(msgs) {
   if (out.length && out[0].role === 'model') {
     out.unshift({ role: 'user', parts: [{ text: '（ロールプレイを始めます）' }] });
   }
+  if (extra) {
+    const last = out[out.length - 1];
+    if (last && last.role === 'user') {
+      last.parts[0].text += '\n' + extra;
+    } else {
+      out.push({ role: 'user', parts: [{ text: extra }] });
+    }
+  }
   return out;
 }
 
-async function generate() {
+/* ---------- 長い会話の要約 ---------- */
+const SUMMARY_KEEP_RECENT = 30;
+const SUMMARY_TRIGGER_BUFFER = 10;
+
+async function maybeSummarize(thread, c) {
+  const s = state.settings;
+  const already = thread.summarizedUpTo || 0;
+  const foldEnd = thread.msgs.length - SUMMARY_KEEP_RECENT;
+  if (foldEnd - already < SUMMARY_TRIGGER_BUFFER) return;
+
+  const toFold = thread.msgs.slice(already, foldEnd);
+  if (!toFold.length) return;
+
+  const lines = toFold
+    .filter(m => m.text && m.text.trim())
+    .map(m => (m.role === 'user' ? (c.userName || 'ユーザー') : c.name) + ': ' + m.text);
+  if (!lines.length) { thread.summarizedUpTo = foldEnd; return; }
+
+  const prompt =
+    '次のロールプレイの会話を、日本語の地の文で簡潔に要約してください。箇条書きにせず、300字程度で、' +
+    '関係性の変化・重要な出来事・直近の状況が分かるようにまとめてください。出力は要約文のみにしてください。\n\n' +
+    (thread.summary ? '【これまでの要約】\n' + thread.summary + '\n\n' : '') +
+    '【追加する会話】\n' + lines.join('\n');
+
+  setStatus('会話を要約中…');
+  try {
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+      encodeURIComponent(s.model) + ':generateContent';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': s.apiKey },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.3 }
+      })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const cand = data.candidates && data.candidates[0];
+    const parts = cand && cand.content && cand.content.parts;
+    const newSummary = parts ? parts.map(p => p.text || '').join('') : '';
+    if (newSummary.trim()) {
+      thread.summary = newSummary.trim();
+      thread.summarizedUpTo = foldEnd;
+      save();
+    }
+  } catch (e) {
+    console.warn('summarize failed', e);
+  } finally {
+    setStatus('');
+  }
+}
+
+async function generate(opts) {
   if (generating) return;
+  const silent = !!(opts && opts.silent);
   const c = currentChar();
   const s = state.settings;
   if (!s.apiKey) {
@@ -785,11 +981,18 @@ async function generate() {
     openSettings();
     return;
   }
+  const thread = currentThread();
+  if (!thread) return;
 
-  const msgs = state.chats[c.id];
+  await maybeSummarize(thread, c);
+
+  const msgs = thread.msgs;
+  const silentExtra = silent
+    ? fill('（{{user}}は今は何も言わず、続きを見守っている。{{char}}は自分から行動や会話を続けてください）', c)
+    : null;
   const body = {
-    systemInstruction: { parts: [{ text: buildSystem(c) }] },
-    contents: buildContents(msgs),
+    systemInstruction: { parts: [{ text: buildSystem(c, thread) }] },
+    contents: buildContents(msgs.slice(thread.summarizedUpTo || 0), silentExtra),
     generationConfig: { temperature: Number(s.temperature) }
   };
   if (s.safety === 'relaxed') {
@@ -946,12 +1149,23 @@ function saveMsgEdit() {
 
 function resetChat() {
   if (generating) return;
-  if (!confirm('この会話をリセットしますか？（履歴は消えます）')) return;
-  state.chats[state.currentId] = [];
+  if (!confirm('このスレッドをリセットしますか？（履歴は消えます）')) return;
+  const t = currentThread();
+  if (!t) return;
+  t.msgs = [];
+  t.summary = '';
+  t.summarizedUpTo = 0;
   ensureChat(state.currentId);
   setStatus('');
   save();
   renderLog();
+}
+
+async function continueStory() {
+  if (generating) return;
+  const msgs = currentMsgs();
+  if (!msgs.length) { setStatus('まだ会話がありません', true); return; }
+  await generate({ silent: true });
 }
 
 function autosize() {
@@ -974,6 +1188,7 @@ async function switchChar(id) {
   setStatus('');
   save();
   await loadImages(id);
+  renderThreadSelect();
   renderLog();
 }
 
@@ -1223,8 +1438,10 @@ async function importData(file) {
       if (i >= 0) state.chars[i] = c; else state.chars.push(c);
     });
     Object.keys(d.chats || {}).forEach(k => {
-      if (Array.isArray(d.chats[k])) state.chats[k] = d.chats[k];
+      const v = d.chats[k];
+      if (Array.isArray(v) || (v && Array.isArray(v.threads))) state.chats[k] = v;
     });
+    normalizeChats();
     if (db && Array.isArray(d.images)) {
       for (const im of d.images) {
         if (!im || !im.id || !im.charId || !im.key || !im.data) continue;
@@ -1247,6 +1464,10 @@ function bindEvents() {
   $('#btnEdit').addEventListener('click', () => openCharDialog(state.currentId));
   $('#btnNew').addEventListener('click', () => openCharDialog(null));
   $('#btnReset').addEventListener('click', resetChat);
+  $('#threadSelect').addEventListener('change', e => { switchThread(e.target.value); });
+  $('#btnThreadNew').addEventListener('click', newThread);
+  $('#btnThreadRename').addEventListener('click', renameThread);
+  $('#btnThreadDelete').addEventListener('click', deleteThread);
   $('#btnBg').addEventListener('click', openImages);
   $('#btnHide').addEventListener('click', () => setBgOnly(true));
   $('#btnShowChat').addEventListener('click', () => setBgOnly(false));
@@ -1256,6 +1477,7 @@ function bindEvents() {
   $('#btnSettings').addEventListener('click', openSettings);
 
   $('#btnSend').addEventListener('click', send);
+  $('#btnContinue').addEventListener('click', continueStory);
   $('#btnStop').addEventListener('click', () => { if (controller) controller.abort(); });
   $('#input').addEventListener('input', autosize);
   $('#input').addEventListener('keydown', e => {
@@ -1277,6 +1499,12 @@ function bindEvents() {
   $('#btnCharSave').addEventListener('click', saveChar);
   $('#btnCharCancel').addEventListener('click', () => $('#dlgChar').close());
   $('#btnCharDelete').addEventListener('click', deleteChar);
+  $('#btnSpeakPreview').addEventListener('click', () => {
+    const id = $('#cSpeakerCustom').value.trim() || $('#cSpeaker').value;
+    if (!id) { setStatus('先に声を選んでください', true); return; }
+    const name = $('#cName').value.trim() || 'テスト';
+    handleSpeakClick('こんにちは、' + name + 'です。よろしくお願いします。', id, $('#btnSpeakPreview'), '試聴');
+  });
 
   $('#btnImgAdd').addEventListener('click', () => $('#fileImg').click());
   $('#fileImg').addEventListener('change', e => {
